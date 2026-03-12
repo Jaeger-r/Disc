@@ -1,0 +1,11 @@
+debug/chat.o
+debug/login.o
+debug/main.o
+debug/md5.o
+debug/widget.o
+debug/tcpnet.o
+debug/tcpkernel.o
+debug/moc_chat.o
+debug/moc_login.o
+debug/moc_widget.o
+debug/moc_tcpkernel.o

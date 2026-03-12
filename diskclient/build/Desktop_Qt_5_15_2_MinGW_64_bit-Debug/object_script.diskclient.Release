@@ -1,0 +1,11 @@
+release/chat.o
+release/login.o
+release/main.o
+release/md5.o
+release/widget.o
+release/tcpnet.o
+release/tcpkernel.o
+release/moc_chat.o
+release/moc_login.o
+release/moc_widget.o
+release/moc_tcpkernel.o
