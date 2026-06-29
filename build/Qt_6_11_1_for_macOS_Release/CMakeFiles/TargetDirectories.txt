@@ -1,0 +1,8 @@
+/Users/jaegerproxima/Disk/diskclient/build/Qt_6_11_1_for_macOS_Release/CMakeFiles/DiskClientApp.dir
+/Users/jaegerproxima/Disk/diskclient/build/Qt_6_11_1_for_macOS_Release/CMakeFiles/DiskClientSmokeTest.dir
+/Users/jaegerproxima/Disk/diskclient/build/Qt_6_11_1_for_macOS_Release/CMakeFiles/edit_cache.dir
+/Users/jaegerproxima/Disk/diskclient/build/Qt_6_11_1_for_macOS_Release/CMakeFiles/rebuild_cache.dir
+/Users/jaegerproxima/Disk/diskclient/build/Qt_6_11_1_for_macOS_Release/CMakeFiles/DiskClientApp_autogen_timestamp_deps.dir
+/Users/jaegerproxima/Disk/diskclient/build/Qt_6_11_1_for_macOS_Release/CMakeFiles/DiskClientApp_autogen.dir
+/Users/jaegerproxima/Disk/diskclient/build/Qt_6_11_1_for_macOS_Release/CMakeFiles/DiskClientSmokeTest_autogen_timestamp_deps.dir
+/Users/jaegerproxima/Disk/diskclient/build/Qt_6_11_1_for_macOS_Release/CMakeFiles/DiskClientSmokeTest_autogen.dir

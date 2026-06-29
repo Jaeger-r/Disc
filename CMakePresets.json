@@ -1,0 +1,21 @@
+{
+  "version": 6,
+  "configurePresets": [
+    {
+      "name": "macos-qt-local-debug",
+      "displayName": "macOS Qt Local Debug",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build-local-qt611",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "CMAKE_PREFIX_PATH": "$env{HOME}/Qt/6.11.1/macos"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "macos-qt-local-debug",
+      "configurePreset": "macos-qt-local-debug"
+    }
+  ]
+}
