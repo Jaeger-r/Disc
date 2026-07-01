@@ -1,0 +1,28 @@
+# macOS
+.DS_Store
+._*
+
+# Qt Creator / local IDE state
+.qtcreator/
+.qtc_clangd/
+CMakeLists.txt.user
+*.user
+
+# CMake / Ninja build output
+build/
+build-*/
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+compile_commands.json
+.ninja_deps
+.ninja_log
+Testing/
+
+# Packaged macOS artifacts
+*.app/
+*.dmg
+*.dSYM/
+
+# Runtime logs
+*.log

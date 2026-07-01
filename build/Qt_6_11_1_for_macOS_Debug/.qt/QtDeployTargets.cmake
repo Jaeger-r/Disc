@@ -1,4 +1,0 @@
-set(__QT_DEPLOY_TARGET_DiskClientApp_FILE /Users/jaegerproxima/Disk/diskclient/build/Qt_6_11_1_for_macOS_Debug/DiskClient.app/Contents/MacOS/DiskClient)
-set(__QT_DEPLOY_TARGET_DiskClientApp_TYPE EXECUTABLE)
-set(__QT_DEPLOY_TARGET_DiskClientSmokeTest_FILE /Users/jaegerproxima/Disk/diskclient/build/Qt_6_11_1_for_macOS_Debug/DiskClientSmokeTest)
-set(__QT_DEPLOY_TARGET_DiskClientSmokeTest_TYPE EXECUTABLE)

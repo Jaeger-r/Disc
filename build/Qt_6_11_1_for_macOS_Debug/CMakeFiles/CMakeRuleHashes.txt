@@ -1,6 +1,0 @@
-# Hashes of file build rules.
-3f217ee1ec943efd3a9c82e93f852584 CMakeFiles/DiskClientApp_autogen
-3f217ee1ec943efd3a9c82e93f852584 CMakeFiles/DiskClientSmokeTest_autogen
-efb370dd1567ab87829958c6a41fd85f DiskClientApp_autogen/EWIEGA46WW/qrc_resources.cpp
-db9d45b30d7960f72f3b58dcf463960b DiskClientApp_autogen/timestamp
-7cf9e2218b6f72e1d6482800940a4b16 DiskClientSmokeTest_autogen/timestamp

@@ -1,8 +1,0 @@
-/Users/jaegerproxima/Disk/diskclient/build-local-qt611/CMakeFiles/DiskClientApp.dir
-/Users/jaegerproxima/Disk/diskclient/build-local-qt611/CMakeFiles/DiskClientSmokeTest.dir
-/Users/jaegerproxima/Disk/diskclient/build-local-qt611/CMakeFiles/edit_cache.dir
-/Users/jaegerproxima/Disk/diskclient/build-local-qt611/CMakeFiles/rebuild_cache.dir
-/Users/jaegerproxima/Disk/diskclient/build-local-qt611/CMakeFiles/DiskClientApp_autogen_timestamp_deps.dir
-/Users/jaegerproxima/Disk/diskclient/build-local-qt611/CMakeFiles/DiskClientApp_autogen.dir
-/Users/jaegerproxima/Disk/diskclient/build-local-qt611/CMakeFiles/DiskClientSmokeTest_autogen_timestamp_deps.dir
-/Users/jaegerproxima/Disk/diskclient/build-local-qt611/CMakeFiles/DiskClientSmokeTest_autogen.dir
