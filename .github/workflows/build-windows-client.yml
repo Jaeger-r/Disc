@@ -32,6 +32,7 @@ jobs:
           arch: x64
 
       - name: Set up Qt
+        id: setup-qt
         uses: jurplel/install-qt-action@v4
         with:
           version: "6.9.1"
@@ -47,7 +48,7 @@ jobs:
         shell: pwsh
         run: |
           .\deploy\package_windows_client.ps1 `
-            -QtRoot "$env:Qt6_DIR" `
+            -QtRoot "${{ steps.setup-qt.outputs.dir }}" `
             -BuildDir ".\build\windows-release" `
             -Generator "Ninja" `
             -Config Release `

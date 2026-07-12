@@ -27,6 +27,67 @@ function Resolve-RequiredTool {
     throw "Required tool '$ToolName' was not found."
 }
 
+function Convert-ToQtRoot {
+    param([string]$Path)
+
+    if (-not $Path) {
+        return ""
+    }
+
+    $resolved = [System.IO.Path]::GetFullPath($Path)
+
+    if (Test-Path (Join-Path $resolved "Qt6Config.cmake")) {
+        $resolved = [System.IO.Path]::GetFullPath((Join-Path $resolved "../../.."))
+    }
+
+    if ((Split-Path -Leaf $resolved) -eq "bin" -and (Test-Path (Join-Path $resolved "windeployqt.exe"))) {
+        $resolved = Split-Path -Parent $resolved
+    }
+
+    if (Test-Path (Join-Path $resolved "bin/windeployqt.exe")) {
+        return $resolved
+    }
+
+    return ""
+}
+
+function Resolve-QtRoot {
+    param([string]$PreferredRoot)
+
+    $candidates = @(
+        $PreferredRoot,
+        $env:Qt6_DIR,
+        $env:QT_ROOT_DIR,
+        $env:Qt6_ROOT,
+        $env:QTDIR
+    )
+
+    foreach ($candidate in $candidates) {
+        $root = Convert-ToQtRoot $candidate
+        if ($root) {
+            return $root
+        }
+    }
+
+    $searchRoots = @(
+        "C:\Qt",
+        $env:RUNNER_WORKSPACE,
+        (Split-Path -Parent $env:GITHUB_WORKSPACE)
+    ) | Where-Object { $_ -and (Test-Path $_) }
+
+    foreach ($searchRoot in $searchRoots) {
+        $windeployqt = Get-ChildItem -Path $searchRoot -Filter "windeployqt.exe" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+        if ($windeployqt) {
+            $root = Split-Path -Parent (Split-Path -Parent $windeployqt.FullName)
+            if (Test-Path (Join-Path $root "bin/windeployqt.exe")) {
+                return $root
+            }
+        }
+    }
+
+    throw "QtRoot is empty or invalid. Pass -QtRoot, set Qt6_DIR/QTDIR, or install Qt for Windows."
+}
+
 $ProjectRoot = Split-Path -Parent $PSScriptRoot
 if (-not $BuildDir) {
     $BuildDir = Join-Path $ProjectRoot "build/windows-release"
@@ -39,18 +100,7 @@ $ZipPath = Join-Path $OutRoot ($PackageName + ".zip")
 
 New-Item -ItemType Directory -Force -Path $OutRoot | Out-Null
 
-if (-not $QtRoot) {
-    if ($env:QTDIR) {
-        $QtRoot = $env:QTDIR
-    } else {
-        throw "QtRoot is empty. Pass -QtRoot or set Qt6_DIR/QTDIR to your Qt for Windows kit."
-    }
-}
-
-$QtRoot = [System.IO.Path]::GetFullPath($QtRoot)
-if (Test-Path (Join-Path $QtRoot "Qt6Config.cmake")) {
-    $QtRoot = [System.IO.Path]::GetFullPath((Join-Path $QtRoot "../../.."))
-}
+$QtRoot = Resolve-QtRoot $QtRoot
 $QtBinDir = if (Test-Path (Join-Path $QtRoot "bin")) { Join-Path $QtRoot "bin" } else { $QtRoot }
 
 $cmake = Resolve-RequiredTool "cmake"
