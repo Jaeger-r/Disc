@@ -1,0 +1,61 @@
+name: Build Windows Client
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+      - master
+    paths:
+      - "**/*.cpp"
+      - "**/*.h"
+      - "**/*.ui"
+      - "CMakeLists.txt"
+      - "CMakePresets.json"
+      - "resources.qrc"
+      - "diskclient.ini"
+      - "tls/ca.crt"
+      - "deploy/package_windows_client.ps1"
+      - ".github/workflows/build-windows-client.yml"
+
+jobs:
+  build-windows-client:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up MSVC
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: Set up Qt
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: "6.9.1"
+          host: windows
+          target: desktop
+          arch: win64_msvc2022_64
+          cache: true
+
+      - name: Set up Ninja
+        uses: seanmiddleditch/gha-setup-ninja@v5
+
+      - name: Build and package
+        shell: pwsh
+        run: |
+          .\deploy\package_windows_client.ps1 `
+            -QtRoot "$env:Qt6_DIR" `
+            -BuildDir ".\build\windows-release" `
+            -Generator "Ninja" `
+            -Config Release `
+            -PackageName "DiskClient-windows-x64"
+
+      - name: Upload Windows package
+        uses: actions/upload-artifact@v4
+        with:
+          name: DiskClient-windows-x64
+          path: out/DiskClient-windows-x64.zip
+          if-no-files-found: error

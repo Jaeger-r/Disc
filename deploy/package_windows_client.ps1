@@ -48,6 +48,9 @@ if (-not $QtRoot) {
 }
 
 $QtRoot = [System.IO.Path]::GetFullPath($QtRoot)
+if (Test-Path (Join-Path $QtRoot "Qt6Config.cmake")) {
+    $QtRoot = [System.IO.Path]::GetFullPath((Join-Path $QtRoot "../../.."))
+}
 $QtBinDir = if (Test-Path (Join-Path $QtRoot "bin")) { Join-Path $QtRoot "bin" } else { $QtRoot }
 
 $cmake = Resolve-RequiredTool "cmake"
