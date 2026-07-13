@@ -25,7 +25,7 @@ TCPNet::~TCPNet()
 
 bool TCPNet::connectServer(const char* szip, quint16 sport)
 {
-    const QString host = QString::fromLocal8Bit(szip);
+    const QString host = QString::fromUtf8(szip);
     if (m_tlsEnabled) {
         if (!loadCaCertificates()) {
             emit connectionStateChanged(false, QStringLiteral("TLS CA 证书加载失败"));

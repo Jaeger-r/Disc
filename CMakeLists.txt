@@ -64,6 +64,7 @@ set(DISKCLIENT_HEADERS
     login.h
     md5.h
     transferpanel.h
+    version.h
     widget.h
     client/INet.h
     client/tcpnet.h

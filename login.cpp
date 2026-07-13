@@ -1,5 +1,9 @@
 #include "login.h"
 
+#include <QDesktopServices>
+#include <QDir>
+#include <QFile>
+#include <QFileInfo>
 #include <QFormLayout>
 #include <QFrame>
 #include <QHBoxLayout>
@@ -7,16 +11,23 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QMessageBox>
+#include <QNetworkAccessManager>
+#include <QNetworkReply>
+#include <QNetworkRequest>
 #include <QPushButton>
 #include <QDebug>
+#include <QStandardPaths>
 #include <QStyle>
+#include <QUrl>
 #include <QVBoxLayout>
 
 #include "kernel/tcpkernel.h"
+#include "version.h"
 
 Login::Login(QWidget* parent)
     : QWidget(parent)
 {
+    m_updateNetwork = new QNetworkAccessManager(this);
     setObjectName(QStringLiteral("loginWindow"));
     buildUi();
     applyStyle();
@@ -59,6 +70,49 @@ void Login::slot_register(STRU_REGISTER_RS* psrr)
     QMessageBox::information(this, QStringLiteral("注册"), message);
 }
 
+void Login::slot_versioncheck(STRU_VERSION_CHECK_RS* response)
+{
+    if (!m_updateLabel || !response) {
+        return;
+    }
+
+    if (!response->m_updateAvailable) {
+        setVersionStatus(QStringLiteral("版本 %1 · 已是最新版本")
+                             .arg(QString::fromUtf8(DISKCLIENT_VERSION)),
+                         QStringLiteral("latest"));
+        m_updateLabel->clear();
+        m_updateLabel->hide();
+        m_updateDownloadStarted = false;
+        setAuthControlsEnabled(true);
+        return;
+    }
+
+    const QString currentVersion = QString::fromUtf8(response->m_currentVersion).trimmed();
+    const QString latestVersion = QString::fromUtf8(response->m_latestVersion).trimmed();
+    const QString downloadUrl = QString::fromUtf8(response->m_downloadUrl).trimmed();
+    const QString releaseNotes = QString::fromUtf8(response->m_releaseNotes).trimmed();
+    setVersionStatus(QStringLiteral("版本 %1 · 有新版本 %2")
+                         .arg(currentVersion.isEmpty() ? QString::fromUtf8(DISKCLIENT_VERSION) : currentVersion,
+                              latestVersion.isEmpty() ? QStringLiteral("未知") : latestVersion),
+                     QStringLiteral("outdated"));
+    QString text = QStringLiteral("发现新版本 %1，当前版本 %2，正在自动下载更新。")
+                       .arg(latestVersion.isEmpty() ? QStringLiteral("未知") : latestVersion,
+                            currentVersion.isEmpty() ? QStringLiteral("未知") : currentVersion);
+    if (!releaseNotes.isEmpty()) {
+        text += QStringLiteral("<br/>%1").arg(releaseNotes.toHtmlEscaped());
+    }
+    if (!downloadUrl.isEmpty()) {
+        text += QStringLiteral("<br/>下载地址：<a href=\"%1\">%1</a>").arg(downloadUrl.toHtmlEscaped());
+    }
+    if (response->m_forceUpdate) {
+        text = QStringLiteral("需要更新后继续使用。<br/>") + text;
+    }
+
+    m_updateLabel->setText(text);
+    m_updateLabel->show();
+    startUpdateDownload(latestVersion, downloadUrl, response->m_forceUpdate != 0);
+}
+
 void Login::slot_connectionStateChanged(bool connected, const QString& reason)
 {
     if (!m_connectionLabel) {
@@ -68,11 +122,17 @@ void Login::slot_connectionStateChanged(bool connected, const QString& reason)
     if (connected) {
         m_connectionLabel->setText(QStringLiteral("已连接服务端"));
         m_connectionLabel->setProperty("state", QStringLiteral("connected"));
+        setVersionStatus(QStringLiteral("版本 %1 · 正在检查更新...")
+                             .arg(QString::fromUtf8(DISKCLIENT_VERSION)),
+                         QStringLiteral("checking"));
     } else {
         m_connectionLabel->setText(reason.trimmed().isEmpty()
             ? QStringLiteral("未连接服务端")
             : QStringLiteral("未连接服务端：%1").arg(reason));
         m_connectionLabel->setProperty("state", QStringLiteral("disconnected"));
+        setVersionStatus(QStringLiteral("版本 %1 · 连接后检查更新")
+                             .arg(QString::fromUtf8(DISKCLIENT_VERSION)),
+                         QStringLiteral("pending"));
     }
     m_connectionLabel->style()->unpolish(m_connectionLabel);
     m_connectionLabel->style()->polish(m_connectionLabel);
@@ -96,8 +156,8 @@ void Login::onRegisterClicked()
         QMessageBox::warning(this, QStringLiteral("注册"), QStringLiteral("请填写手机号、用户名和密码。"));
         return;
     }
-    qstrncpy(request.m_szName, user.toLocal8Bit().constData(), MAXSIZE);
-    qstrncpy(request.m_szPassWord, password.toLocal8Bit().constData(), MAXSIZE);
+    qstrncpy(request.m_szName, user.toUtf8().constData(), MAXSIZE);
+    qstrncpy(request.m_szPassWord, password.toUtf8().constData(), MAXSIZE);
     request.m_tel = tel.toLongLong();
 
     if (!m_pKernel->sendData(reinterpret_cast<char*>(&request), sizeof(request))) {
@@ -121,13 +181,156 @@ void Login::onLoginClicked()
         QMessageBox::warning(this, QStringLiteral("登录"), QStringLiteral("请填写用户名和密码。"));
         return;
     }
-    qstrncpy(request.m_szName, m_currentUserName.toLocal8Bit().constData(), MAXSIZE);
-    qstrncpy(request.m_szPassWord, m_loginPasswordEdit->text().toLocal8Bit().constData(), MAXSIZE);
+    qstrncpy(request.m_szName, m_currentUserName.toUtf8().constData(), MAXSIZE);
+    qstrncpy(request.m_szPassWord, m_loginPasswordEdit->text().toUtf8().constData(), MAXSIZE);
     if (m_pKernel->sendData(reinterpret_cast<char*>(&request), sizeof(request))) {
         emit loginRequested();
     } else {
         QMessageBox::warning(this, QStringLiteral("登录"), QStringLiteral("登录请求发送失败。"));
     }
+}
+
+void Login::onUpdateDownloadProgress(qint64 bytesReceived, qint64 bytesTotal)
+{
+    if (!m_updateLabel || bytesTotal <= 0) {
+        return;
+    }
+
+    const int percent = static_cast<int>((bytesReceived * 100) / bytesTotal);
+    m_updateLabel->setText(QStringLiteral("发现新版本 %1，正在自动下载更新：%2%。<br/>保存位置：%3")
+                               .arg(m_updateVersion.isEmpty() ? QStringLiteral("未知") : m_updateVersion)
+                               .arg(percent)
+                               .arg(m_updateDownloadPath.toHtmlEscaped()));
+}
+
+void Login::onUpdateDownloadFinished()
+{
+    if (!m_updateReply) {
+        return;
+    }
+
+    QNetworkReply* reply = m_updateReply;
+    m_updateReply = nullptr;
+
+    if (reply->error() != QNetworkReply::NoError) {
+        if (m_updateLabel) {
+            m_updateLabel->setText(QStringLiteral("新版本下载失败：%1").arg(reply->errorString().toHtmlEscaped()));
+            m_updateLabel->show();
+        }
+        reply->deleteLater();
+        setAuthControlsEnabled(true);
+        m_updateDownloadStarted = false;
+        return;
+    }
+
+    QFile file(m_updateDownloadPath);
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+        if (m_updateLabel) {
+            m_updateLabel->setText(QStringLiteral("新版本下载完成，但无法写入文件：%1").arg(m_updateDownloadPath.toHtmlEscaped()));
+            m_updateLabel->show();
+        }
+        reply->deleteLater();
+        setAuthControlsEnabled(true);
+        m_updateDownloadStarted = false;
+        return;
+    }
+
+    file.write(reply->readAll());
+    file.close();
+    reply->deleteLater();
+
+    if (m_updateLabel) {
+        m_updateLabel->setText(QStringLiteral("新版本已下载完成，正在打开安装包。<br/>%1")
+                                   .arg(m_updateDownloadPath.toHtmlEscaped()));
+        m_updateLabel->show();
+    }
+
+    QDesktopServices::openUrl(QUrl::fromLocalFile(m_updateDownloadPath));
+}
+
+void Login::startUpdateDownload(const QString& latestVersion, const QString& downloadUrl, bool forceUpdate)
+{
+    if (downloadUrl.trimmed().isEmpty() || !m_updateNetwork || m_updateDownloadStarted) {
+        if (forceUpdate) {
+            setAuthControlsEnabled(false);
+        }
+        return;
+    }
+
+    const QUrl url(downloadUrl.trimmed());
+    if (!url.isValid() || !url.scheme().startsWith(QStringLiteral("http"))) {
+        if (m_updateLabel) {
+            m_updateLabel->setText(QStringLiteral("发现新版本，但下载地址无效：%1").arg(downloadUrl.toHtmlEscaped()));
+            m_updateLabel->show();
+        }
+        return;
+    }
+
+    m_updateVersion = latestVersion.trimmed();
+    QString downloadsDir = QStandardPaths::writableLocation(QStandardPaths::DownloadLocation);
+    if (downloadsDir.isEmpty()) {
+        downloadsDir = QDir::homePath();
+    }
+
+    QString fileName = QFileInfo(url.path()).fileName();
+    if (fileName.isEmpty()) {
+        fileName = QStringLiteral("DiskClient-%1").arg(m_updateVersion.isEmpty() ? QStringLiteral("update") : m_updateVersion);
+#ifdef Q_OS_MAC
+        fileName += QStringLiteral(".dmg");
+#elif defined(Q_OS_WIN)
+        fileName += QStringLiteral(".zip");
+#else
+        fileName += QStringLiteral(".bin");
+#endif
+    }
+    m_updateDownloadPath = QDir(downloadsDir).filePath(fileName);
+
+    if (forceUpdate) {
+        setAuthControlsEnabled(false);
+    }
+
+    m_updateDownloadStarted = true;
+    QNetworkRequest request(url);
+    m_updateReply = m_updateNetwork->get(request);
+    connect(m_updateReply, &QNetworkReply::downloadProgress, this, &Login::onUpdateDownloadProgress);
+    connect(m_updateReply, &QNetworkReply::finished, this, &Login::onUpdateDownloadFinished);
+}
+
+void Login::setAuthControlsEnabled(bool enabled)
+{
+    if (m_registerButton) {
+        m_registerButton->setEnabled(enabled);
+    }
+    if (m_loginButton) {
+        m_loginButton->setEnabled(enabled);
+    }
+    if (m_registerTelEdit) {
+        m_registerTelEdit->setEnabled(enabled);
+    }
+    if (m_registerUserEdit) {
+        m_registerUserEdit->setEnabled(enabled);
+    }
+    if (m_registerPasswordEdit) {
+        m_registerPasswordEdit->setEnabled(enabled);
+    }
+    if (m_loginUserEdit) {
+        m_loginUserEdit->setEnabled(enabled);
+    }
+    if (m_loginPasswordEdit) {
+        m_loginPasswordEdit->setEnabled(enabled);
+    }
+}
+
+void Login::setVersionStatus(const QString& text, const QString& state)
+{
+    if (!m_versionLabel) {
+        return;
+    }
+
+    m_versionLabel->setText(text);
+    m_versionLabel->setProperty("state", state);
+    m_versionLabel->style()->unpolish(m_versionLabel);
+    m_versionLabel->style()->polish(m_versionLabel);
 }
 
 void Login::buildUi()
@@ -147,8 +350,14 @@ void Login::buildUi()
     auto* subtitle = new QLabel(QStringLiteral("基于 Qt 的轻量级网盘客户端，支持登录、聊天、上传与下载。"), introCard);
     subtitle->setWordWrap(true);
     subtitle->setObjectName(QStringLiteral("subtitleLabel"));
+    m_versionLabel = new QLabel(QStringLiteral("版本 %1 · 正在检查更新...")
+                                    .arg(QString::fromUtf8(DISKCLIENT_VERSION)),
+                                introCard);
+    m_versionLabel->setObjectName(QStringLiteral("versionLabel"));
+    m_versionLabel->setProperty("state", QStringLiteral("checking"));
     introLayout->addWidget(title);
     introLayout->addWidget(subtitle);
+    introLayout->addWidget(m_versionLabel);
     introLayout->addStretch();
 
     auto* formCard = new QFrame(this);
@@ -165,6 +374,14 @@ void Login::buildUi()
     m_connectionLabel->setObjectName(QStringLiteral("connectionLabel"));
     m_connectionLabel->setProperty("state", QStringLiteral("pending"));
     formCardLayout->addWidget(m_connectionLabel);
+
+    m_updateLabel = new QLabel(formCard);
+    m_updateLabel->setObjectName(QStringLiteral("updateLabel"));
+    m_updateLabel->setWordWrap(true);
+    m_updateLabel->setOpenExternalLinks(true);
+    m_updateLabel->setTextFormat(Qt::RichText);
+    m_updateLabel->hide();
+    formCardLayout->addWidget(m_updateLabel);
 
     m_tabWidget = new QTabWidget(formCard);
     formCardLayout->addWidget(m_tabWidget);
@@ -238,10 +455,15 @@ void Login::applyStyle()
         "QWidget#registerPage, QWidget#loginPage { background: transparent; }"
         "QLabel#titleLabel { color: white; font-size: 32px; font-weight: 700; }"
         "QLabel#subtitleLabel { color: rgba(255,255,255,0.82); font-size: 15px; line-height: 1.5; }"
+        "QLabel#versionLabel { color: rgba(255,255,255,0.72); font-size: 13px; font-weight: 600; }"
+        "QLabel#versionLabel[state=\"latest\"] { color: #a7f3d0; }"
+        "QLabel#versionLabel[state=\"outdated\"] { color: #fde68a; }"
         "QLabel#headerLabel { font-size: 22px; font-weight: 700; }"
         "QLabel#connectionLabel { min-height: 24px; font-size: 13px; font-weight: 600; color: #6b7280; }"
         "QLabel#connectionLabel[state=\"connected\"] { color: #0f8a5f; }"
         "QLabel#connectionLabel[state=\"disconnected\"] { color: #b42318; }"
+        "QLabel#updateLabel { border-radius: 10px; padding: 10px 12px; background: #fff7e6; color: #8a5a00; font-size: 13px; font-weight: 600; }"
+        "QLabel#updateLabel a { color: #165f6d; text-decoration: underline; }"
         "QLineEdit { min-height: 38px; border-radius: 12px; padding: 0 12px; border: 1px solid #c9d6e2; background: #f8fbfd; }"
         "QPushButton { min-height: 42px; border-radius: 14px; border: none; background: #1f7a8c; color: white; font-weight: 600; }"
         "QPushButton:hover { background: #165f6d; }"

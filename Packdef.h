@@ -54,6 +54,9 @@
 #define _default_protocol_private_history_send           _default_protocol_base + 35
 #define _default_protocol_profile_update_request         _default_protocol_base + 36
 #define _default_protocol_profile_update_send            _default_protocol_base + 37
+//客户端版本检查
+#define _default_protocol_version_check_request          _default_protocol_base + 38
+#define _default_protocol_version_check_send             _default_protocol_base + 39
 
 
 
@@ -67,6 +70,9 @@
 #define MAXSENDMESSSAGE 1024
 #define ONLINEUSERNUM 64
 #define CHATHISTORYNUM 50
+#define VERSION_SIZE 32
+#define UPDATE_URL_SIZE 256
+#define UPDATE_NOTES_SIZE 512
 #define _register_err 0
 #define _register_success 1
 
@@ -393,6 +399,24 @@ struct STRU_PROFILE_UPDATE_RS:public STRU_BASE{
     char m_szResult;
     char m_szName[MAXSIZE];
 };
+struct STRU_VERSION_CHECK_RQ:public STRU_BASE{
+    STRU_VERSION_CHECK_RQ(){
+        m_nType = _default_protocol_version_check_request;
+    }
+    char m_currentVersion[VERSION_SIZE];
+    char m_platform[VERSION_SIZE];
+};
+struct STRU_VERSION_CHECK_RS:public STRU_BASE{
+    STRU_VERSION_CHECK_RS(){
+        m_nType = _default_protocol_version_check_send;
+    }
+    char m_updateAvailable;
+    char m_forceUpdate;
+    char m_currentVersion[VERSION_SIZE];
+    char m_latestVersion[VERSION_SIZE];
+    char m_downloadUrl[UPDATE_URL_SIZE];
+    char m_releaseNotes[UPDATE_NOTES_SIZE];
+};
 //传输控制
 struct STRU_TRANSFERCONTROL_RQ:public STRU_BASE{
     STRU_TRANSFERCONTROL_RQ(){
@@ -409,10 +433,11 @@ struct STRU_TRANSFERCONTROL_RS:public STRU_BASE{
     }
     char m_target;
     char m_action;
-    long long m_fileId;
     char m_szResult;
+    long long m_fileId;
     char m_szFileMD5[MAXSIZE];
 };
+
 //分享
 struct STRU_SHARELINK_RQ:public STRU_BASE{
     STRU_SHARELINK_RQ(){

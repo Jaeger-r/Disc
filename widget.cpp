@@ -119,6 +119,8 @@ Widget::Widget(QWidget* parent)
     connect(static_cast<TCPKernel*>(m_kernel), &TCPKernel::signal_privatehistory, this, &Widget::slot_privatehistory);
     connect(static_cast<TCPKernel*>(m_kernel), &TCPKernel::signal_profileupdate, this, &Widget::slot_profileupdate);
     connect(static_cast<TCPKernel*>(m_kernel), &TCPKernel::signal_transfercontrol, this, &Widget::slot_transfercontrol);
+    connect(static_cast<TCPKernel*>(m_kernel), &TCPKernel::signal_versioncheck, this, &Widget::slot_versioncheck);
+    connect(static_cast<TCPKernel*>(m_kernel), &TCPKernel::signal_versioncheck, m_login, &Login::slot_versioncheck);
     connect(static_cast<TCPKernel*>(m_kernel), &TCPKernel::signal_connectionStateChanged, this, &Widget::slot_connectionStateChanged);
     connect(static_cast<TCPKernel*>(m_kernel), &TCPKernel::signal_connectionStateChanged, m_login, &Login::slot_connectionStateChanged);
 
@@ -130,6 +132,7 @@ Widget::Widget(QWidget* parent)
         m_connectionBadge->setText(QStringLiteral("已连接服务端"));
         m_login->slot_connectionStateChanged(true, QStringLiteral("TLS connected"));
         appendStatus(QStringLiteral("客户端已连接到服务端（TLS）。"));
+        requestVersionCheck();
     } else {
         m_connectionBadge->setText(QStringLiteral("连接失败"));
         m_login->slot_connectionStateChanged(false, QStringLiteral("连接失败"));
@@ -183,6 +186,19 @@ void Widget::slot_login(STRU_LOGIN_RS* response)
     QMessageBox::information(this, QStringLiteral("登录"), result);
 }
 
+void Widget::slot_versioncheck(STRU_VERSION_CHECK_RS* response)
+{
+    if (!response) {
+        return;
+    }
+    const QString latestVersion = QString::fromUtf8(response->m_latestVersion).trimmed();
+    if (response->m_updateAvailable) {
+        appendStatus(QStringLiteral("发现客户端新版本：%1").arg(latestVersion));
+    } else {
+        appendStatus(QStringLiteral("客户端已经是最新版本。"));
+    }
+}
+
 void Widget::slot_getfilelist(STRU_GETFILELIST_RS* response)
 {
     if (!response) {
@@ -190,10 +206,10 @@ void Widget::slot_getfilelist(STRU_GETFILELIST_RS* response)
     }
 
     for (int i = 0; i < response->m_FileNum; ++i) {
-        addOrUpdateFileRow(QString::fromLocal8Bit(response->m_aryInfo[i].m_szFileName),
+        addOrUpdateFileRow(QString::fromUtf8(response->m_aryInfo[i].m_szFileName),
                            response->m_aryInfo[i].m_fileSize,
-                           QString::fromLocal8Bit(response->m_aryInfo[i].m_szFileDateTime),
-                           QString::fromLocal8Bit(response->m_aryInfo[i].m_szFileMD5),
+                           QString::fromUtf8(response->m_aryInfo[i].m_szFileDateTime),
+                           QString::fromUtf8(response->m_aryInfo[i].m_szFileMD5),
                            response->m_aryInfo[i].m_fileState);
     }
 }
@@ -204,8 +220,8 @@ void Widget::slot_uploadfileinfo(STRU_UPLOADFILEINFO_RS* response)
         return;
     }
 
-    TransferTask* task = findTaskByUploadResponse(QString::fromLocal8Bit(response->m_szFileName),
-                                                  QString::fromLocal8Bit(response->m_szFileMD5));
+    TransferTask* task = findTaskByUploadResponse(QString::fromUtf8(response->m_szFileName),
+                                                  QString::fromUtf8(response->m_szFileMD5));
     if (!task) {
         return;
     }
@@ -281,7 +297,7 @@ void Widget::slot_deletefile(STRU_DELETEFILE_RS* response)
         return;
     }
 
-    const QString md5 = QString::fromLocal8Bit(response->m_szFileMD5);
+    const QString md5 = QString::fromUtf8(response->m_szFileMD5);
     if (response->m_szResult == _delete_success) {
         appendStatus(QStringLiteral("文件已删除。"));
         refreshFileList();
@@ -298,7 +314,7 @@ void Widget::slot_renamefile(STRU_RENAMEFILE_RS* response)
     }
 
     if (response->m_szResult == _rename_success) {
-        appendStatus(QStringLiteral("文件已重命名为：%1").arg(QString::fromLocal8Bit(response->m_szNewFileName)));
+        appendStatus(QStringLiteral("文件已重命名为：%1").arg(QString::fromUtf8(response->m_szNewFileName)));
         refreshFileList();
         return;
     }
@@ -338,7 +354,7 @@ void Widget::slot_filesync(STRU_FILESYNC_RS* response)
     }
 
     appendStatus(QStringLiteral("%1：%2")
-                     .arg(actionText, QString::fromLocal8Bit(response->m_szFileName)));
+                     .arg(actionText, QString::fromUtf8(response->m_szFileName)));
     refreshFileList();
 }
 
@@ -353,7 +369,7 @@ void Widget::slot_downloadfileinfo(STRU_DOWNLOADFILEINFO_RS* response)
         task = findTaskByFileId(TransferTask::Download, response->m_fileId);
     }
     if (!task && qstrlen(response->m_szFileMD5) > 0) {
-        const QString md5 = QString::fromLocal8Bit(response->m_szFileMD5);
+        const QString md5 = QString::fromUtf8(response->m_szFileMD5);
         task = m_transferTasks.value(makeTaskKey(TransferTask::Download, md5), nullptr);
     }
     if (!task || task->state != TransferTask::AwaitingServer) {
@@ -496,7 +512,7 @@ void Widget::slot_transfercontrol(STRU_TRANSFERCONTROL_RS* response)
                                 response->m_fileId);
     }
     if (!task && qstrlen(response->m_szFileMD5) > 0) {
-        const QString md5 = QString::fromLocal8Bit(response->m_szFileMD5);
+        const QString md5 = QString::fromUtf8(response->m_szFileMD5);
         task = m_transferTasks.value(makeTaskKey(response->m_target == _transfer_target_download ? TransferTask::Download : TransferTask::Upload, md5), nullptr);
     }
     if (!task) {
@@ -520,6 +536,7 @@ void Widget::slot_connectionStateChanged(bool connected, const QString& reason)
     m_connectionBadge->setText(connected ? QStringLiteral("已连接服务端") : QStringLiteral("连接中断"));
     if (connected) {
         appendStatus(QStringLiteral("网络连接已建立：%1").arg(reason));
+        requestVersionCheck();
         return;
     }
 
@@ -664,7 +681,7 @@ void Widget::onDeleteClicked()
 
     STRU_DELETEFILE_RQ request;
     request.m_userId = m_userId;
-    qstrncpy(request.m_szFileMD5, md5.toLocal8Bit().constData(), MAXSIZE);
+    qstrncpy(request.m_szFileMD5, md5.toUtf8().constData(), MAXSIZE);
     m_kernel->sendData(reinterpret_cast<char*>(&request), sizeof(request));
 }
 
@@ -1582,8 +1599,8 @@ void Widget::requestRenameSelectedFile()
 
     STRU_RENAMEFILE_RQ request;
     request.m_userId = m_userId;
-    qstrncpy(request.m_szFileMD5, md5.toLocal8Bit().constData(), MAXSIZE);
-    qstrncpy(request.m_szNewFileName, newName.toLocal8Bit().constData(), NAMESIZE);
+    qstrncpy(request.m_szFileMD5, md5.toUtf8().constData(), MAXSIZE);
+    qstrncpy(request.m_szNewFileName, newName.toUtf8().constData(), NAMESIZE);
     m_kernel->sendData(reinterpret_cast<char*>(&request), sizeof(request));
 }
 
@@ -1815,8 +1832,8 @@ void Widget::startUploadHandshake(TransferTask* task)
     STRU_UPLOADFILEINFO_RQ request;
     request.m_userid = m_userId;
     request.m_filesize = task->totalBytes;
-    qstrncpy(request.m_szFileName, task->displayName.toLocal8Bit().constData(), MAXSIZE);
-    qstrncpy(request.m_szFileMD5, task->md5.toLocal8Bit().constData(), MAXSIZE);
+    qstrncpy(request.m_szFileName, task->displayName.toUtf8().constData(), MAXSIZE);
+    qstrncpy(request.m_szFileMD5, task->md5.toUtf8().constData(), MAXSIZE);
     m_kernel->sendData(reinterpret_cast<char*>(&request), sizeof(request));
 
     appendStatus(QStringLiteral("准备上传文件：%1").arg(task->displayName));
@@ -1845,8 +1862,8 @@ void Widget::startDownloadHandshake(TransferTask* task, bool resumeExistingFile)
     request.m_userid = m_userId;
     request.m_filesize = task->totalBytes;
     request.m_pos = task->transferredBytes;
-    qstrncpy(request.m_szFileName, task->displayName.toLocal8Bit().constData(), MAXSIZE);
-    qstrncpy(request.m_szFileMD5, task->md5.toLocal8Bit().constData(), MAXSIZE);
+    qstrncpy(request.m_szFileName, task->displayName.toUtf8().constData(), MAXSIZE);
+    qstrncpy(request.m_szFileMD5, task->md5.toUtf8().constData(), MAXSIZE);
     m_kernel->sendData(reinterpret_cast<char*>(&request), sizeof(request));
 
     appendStatus(QStringLiteral("准备下载文件：%1").arg(task->displayName));
@@ -2002,13 +2019,20 @@ void Widget::sendTransferControl(TransferTask* task, char action)
     request.m_target = task->direction == TransferTask::Upload ? _transfer_target_upload : _transfer_target_download;
     request.m_action = action;
     request.m_fileId = task->fileId;
-    qstrncpy(request.m_szFileMD5, task->md5.toLocal8Bit().constData(), MAXSIZE);
+    qstrncpy(request.m_szFileMD5, task->md5.toUtf8().constData(), MAXSIZE);
     m_kernel->sendData(reinterpret_cast<char*>(&request), sizeof(request));
 }
 
 void Widget::clearTaskIfTerminal(TransferTask* task)
 {
     Q_UNUSED(task);
+}
+
+void Widget::requestVersionCheck()
+{
+    if (auto* tcpKernel = dynamic_cast<TCPKernel*>(m_kernel)) {
+        tcpKernel->requestVersionCheck();
+    }
 }
 
 TransferTask* Widget::findTaskByUploadResponse(const QString& fileName, const QString& md5) const

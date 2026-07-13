@@ -34,6 +34,7 @@ signals:
     void signal_privatehistory(STRU_PRIVATE_HISTORY_RS*);
     void signal_profileupdate(STRU_PROFILE_UPDATE_RS*);
     void signal_transfercontrol(STRU_TRANSFERCONTROL_RS*);
+    void signal_versioncheck(STRU_VERSION_CHECK_RS*);
     void signal_connectionStateChanged(bool connected, const QString& reason);
 private:
     INet*m_pTCPNet;
@@ -44,6 +45,7 @@ private:
 public:
     bool isConnected() const override;
     QString appResourcePath(const QString& relativePath) const;
+    bool requestVersionCheck();
 };
 
 #endif // TCPKERNEL_H

@@ -3,6 +3,9 @@
 #include <QCoreApplication>
 #include <QDir>
 #include <QFileInfo>
+#include <QSysInfo>
+
+#include "version.h"
 
 TCPKernel::TCPKernel(QObject *parent)
     : QObject{parent}
@@ -54,9 +57,9 @@ TCPKernel::~TCPKernel()
 
 bool TCPKernel::connect(const char *szip, quint16 sport)
 {
-    const QString requestedHost = QString::fromLocal8Bit(szip ? szip : "").trimmed();
+    const QString requestedHost = QString::fromUtf8(szip ? szip : "").trimmed();
     const QByteArray hostBytes =
-        (requestedHost.isEmpty() ? m_serverHost : requestedHost).toLocal8Bit();
+        (requestedHost.isEmpty() ? m_serverHost : requestedHost).toUtf8();
     const quint16 targetPort = sport > 0 ? sport : m_serverPort;
     if(m_pTCPNet->connectServer(hostBytes.constData(), targetPort)){
         return true;
@@ -68,6 +71,21 @@ bool TCPKernel::connect(const char *szip, quint16 sport)
 QString TCPKernel::appResourcePath(const QString& relativePath) const
 {
     return QDir(QCoreApplication::applicationDirPath()).filePath(relativePath);
+}
+
+bool TCPKernel::requestVersionCheck()
+{
+    if (!isConnected()) {
+        return false;
+    }
+
+    STRU_VERSION_CHECK_RQ request;
+    memset(request.m_currentVersion, 0, sizeof(request.m_currentVersion));
+    memset(request.m_platform, 0, sizeof(request.m_platform));
+    qstrncpy(request.m_currentVersion, DISKCLIENT_VERSION, VERSION_SIZE);
+    const QByteArray platform = QSysInfo::productType().toUtf8();
+    qstrncpy(request.m_platform, platform.constData(), VERSION_SIZE);
+    return sendData(reinterpret_cast<const char*>(&request), sizeof(request));
 }
 
 void TCPKernel::disconnect(const char *szerr)
@@ -133,6 +151,9 @@ void TCPKernel::dealData(const char *szbuf)
             break;
         case _default_protocol_transfercontrol_send:
             emit signal_transfercontrol((STRU_TRANSFERCONTROL_RS*)szbuf);
+            break;
+        case _default_protocol_version_check_send:
+            emit signal_versioncheck((STRU_VERSION_CHECK_RS*)szbuf);
             break;
     }
 }

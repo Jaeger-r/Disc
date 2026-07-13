@@ -260,6 +260,20 @@ QString saveCroppedImage(const QPixmap& pixmap, const QString& prefix)
         .arg(prefix, QString::number(QDateTime::currentMSecsSinceEpoch())));
     return pixmap.save(filePath, "PNG") ? filePath : QString();
 }
+
+QString protocolText(const char* value)
+{
+    return QString::fromUtf8(value ? value : "").trimmed();
+}
+
+void copyProtocolText(char* dest, qsizetype destSize, const QString& value)
+{
+    if (!dest || destSize <= 0) {
+        return;
+    }
+    const QByteArray bytes = value.toUtf8();
+    qstrncpy(dest, bytes.constData(), destSize);
+}
 }
 
 ConversationPanel::ConversationPanel(QWidget* parent)
@@ -306,7 +320,6 @@ void ConversationPanel::paintEvent(QPaintEvent* event)
     painter.drawRoundedRect(rect().adjusted(0, 0, -1, -1), 18, 18);
     QWidget::paintEvent(event);
 }
-
 Chat::Chat(QWidget* parent)
     : QWidget(parent)
 {
@@ -345,8 +358,8 @@ void Chat::appendIncomingMessage(STRU_CHAT_RS* response)
         return;
     }
 
-    const QString userName = QString::fromLocal8Bit(response->m_userName).trimmed();
-    const QString content = QString::fromLocal8Bit(response->szbuf).trimmed();
+    const QString userName = protocolText(response->m_userName);
+    const QString content = protocolText(response->szbuf);
     addMessageBubble(0, userName, content, QString());
     if (!userName.isEmpty() && userName != m_currentUserName) {
         notifyIncomingMessage(userName, content);
@@ -365,7 +378,7 @@ void Chat::updateOnlineUsers(STRU_ONLINE_USERS_RS* response)
 
     for (int i = 0; i < response->m_userCount && i < ONLINEUSERNUM; ++i) {
         const long long userId = response->m_users[i].m_userId;
-        const QString userName = QString::fromLocal8Bit(response->m_users[i].m_userName).trimmed();
+        const QString userName = protocolText(response->m_users[i].m_userName);
         if (userId <= 0 || userName.isEmpty()) {
             continue;
         }
@@ -402,14 +415,14 @@ void Chat::appendPrivateMessage(STRU_PRIVATE_CHAT_RS* response)
 
     const long long peerId = response->m_senderId == m_currentUserId ? response->m_receiverId : response->m_senderId;
     const QString peerName = response->m_senderId == m_currentUserId
-        ? QString::fromLocal8Bit(response->m_receiverName).trimmed()
-        : QString::fromLocal8Bit(response->m_senderName).trimmed();
+        ? protocolText(response->m_receiverName)
+        : protocolText(response->m_senderName);
     if (peerId > 0 && !peerName.isEmpty() && !m_onlineUsers.contains(peerId)) {
         m_onlineUsers.insert(peerId, peerName);
     }
 
-    const QString senderName = QString::fromLocal8Bit(response->m_senderName).trimmed();
-    const QString content = QString::fromLocal8Bit(response->szbuf).trimmed();
+    const QString senderName = protocolText(response->m_senderName);
+    const QString content = protocolText(response->szbuf);
     if (peerId == m_currentPeerId) {
         appendConversationLine(response->m_senderId, senderName, content);
     } else if (response->m_senderId != m_currentUserId) {
@@ -440,9 +453,9 @@ void Chat::loadPrivateHistory(STRU_PRIVATE_HISTORY_RS* response)
     for (int i = 0; i < response->m_messageCount && i < CHATHISTORYNUM; ++i) {
         const ChatHistoryInfo& item = response->m_messages[i];
         appendConversationLine(item.m_senderId,
-                               QString::fromLocal8Bit(item.m_senderName).trimmed(),
-                               QString::fromLocal8Bit(item.szbuf).trimmed(),
-                               QString::fromLocal8Bit(item.m_createdAt).trimmed());
+                               protocolText(item.m_senderName),
+                               protocolText(item.szbuf),
+                               protocolText(item.m_createdAt));
     }
 }
 
@@ -454,7 +467,7 @@ void Chat::handleProfileUpdate(STRU_PROFILE_UPDATE_RS* response)
 
     QString message;
     if (response->m_szResult == _profile_update_success) {
-        m_currentUserName = QString::fromLocal8Bit(response->m_szName).trimmed();
+        m_currentUserName = protocolText(response->m_szName);
         message = QStringLiteral("个人信息已更新");
         rebuildMessages();
         requestOnlineUsers();
@@ -508,9 +521,9 @@ void Chat::sendTextMessage(const QString& message)
     STRU_PRIVATE_CHAT_RQ request;
     request.m_senderId = m_currentUserId;
     request.m_receiverId = m_currentPeerId;
-    qstrncpy(request.m_senderName, m_currentUserName.toLocal8Bit().constData(), MAXSIZE);
-    qstrncpy(request.m_receiverName, m_currentPeerName.toLocal8Bit().constData(), MAXSIZE);
-    qstrncpy(request.szbuf, message.toLocal8Bit().constData(), MAXSENDMESSSAGE);
+    copyProtocolText(request.m_senderName, MAXSIZE, m_currentUserName);
+    copyProtocolText(request.m_receiverName, MAXSIZE, m_currentPeerName);
+    copyProtocolText(request.szbuf, MAXSENDMESSSAGE, message);
     m_kernel->sendData(reinterpret_cast<char*>(&request), sizeof(request));
 
     appendConversationLine(m_currentUserId, m_currentUserName, message, QDateTime::currentDateTime().toString(QStringLiteral("yyyy-MM-dd HH:mm:ss")));

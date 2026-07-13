@@ -81,6 +81,7 @@ public slots:
     void slot_privatehistory(STRU_PRIVATE_HISTORY_RS*);
     void slot_profileupdate(STRU_PROFILE_UPDATE_RS*);
     void slot_transfercontrol(STRU_TRANSFERCONTROL_RS*);
+    void slot_versioncheck(STRU_VERSION_CHECK_RS*);
     void slot_connectionStateChanged(bool connected, const QString& reason);
 
 private slots:
@@ -150,6 +151,7 @@ private:
     void stopUploadPumpIfIdle();
     void sendTransferControl(TransferTask* task, char action);
     void clearTaskIfTerminal(TransferTask* task);
+    void requestVersionCheck();
     TransferTask* findTaskByUploadResponse(const QString& fileName, const QString& md5 = QString()) const;
     TransferTask* findTaskByFileId(TransferTask::Direction direction, qint64 fileId) const;
 
