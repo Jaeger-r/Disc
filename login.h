@@ -21,6 +21,7 @@ public:
 
     void setKernel(IKernel* pKernel);
     QString currentUserName() const;
+    void prepareLoginForUser(const QString& userName = QString());
 
 public slots:
     void slot_register(STRU_REGISTER_RS* psrr);

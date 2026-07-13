@@ -37,6 +37,20 @@ QString Login::currentUserName() const
     return m_currentUserName;
 }
 
+void Login::prepareLoginForUser(const QString& userName)
+{
+    if (m_tabWidget) {
+        m_tabWidget->setCurrentIndex(1);
+    }
+    if (m_loginUserEdit) {
+        m_loginUserEdit->setText(userName);
+    }
+    if (m_loginPasswordEdit) {
+        m_loginPasswordEdit->clear();
+        m_loginPasswordEdit->setFocus();
+    }
+}
+
 void Login::slot_register(STRU_REGISTER_RS* psrr)
 {
     const QString message = psrr && psrr->m_szResult == _register_success

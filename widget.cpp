@@ -6,28 +6,75 @@
 #include <QFile>
 #include <QFileDialog>
 #include <QFileInfo>
+#include <QDialog>
+#include <QDialogButtonBox>
+#include <QFrame>
+#include <QGridLayout>
 #include <QHeaderView>
 #include <QHBoxLayout>
 #include <QIcon>
 #include <QInputDialog>
 #include <QLabel>
 #include <QLineEdit>
+#include <QLinearGradient>
 #include <QMenu>
 #include <QMessageBox>
+#include <QPainter>
+#include <QPainterPath>
 #include <QPoint>
 #include <QBrush>
 #include <QPushButton>
+#include <QSettings>
+#include <QStandardPaths>
+#include <QTabWidget>
 #include <QTableWidget>
 #include <QTableWidgetItem>
 #include <QTextEdit>
+#include <QToolButton>
 #include <QVBoxLayout>
 
 #include "md5.h"
+#include "imagecropdialog.h"
 
 namespace {
 QString currentTimestamp()
 {
     return QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss");
+}
+
+QString initialsForName(const QString& name)
+{
+    const QString trimmed = name.trimmed();
+    return trimmed.isEmpty() ? QStringLiteral("U") : trimmed.left(1).toUpper();
+}
+
+QIcon makeProfileIcon(const QColor& color = QColor(22, 50, 79))
+{
+    QPixmap pixmap(64, 64);
+    pixmap.fill(Qt::transparent);
+    QPainter painter(&pixmap);
+    painter.setRenderHint(QPainter::Antialiasing);
+    painter.setPen(QPen(color, 4, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+    painter.setBrush(Qt::NoBrush);
+    painter.drawEllipse(QRectF(20, 12, 24, 24));
+    QPainterPath shoulders;
+    shoulders.moveTo(14, 52);
+    shoulders.cubicTo(18, 40, 46, 40, 50, 52);
+    painter.drawPath(shoulders);
+    return QIcon(pixmap);
+}
+
+QString saveCroppedImage(const QPixmap& pixmap, const QString& prefix)
+{
+    if (pixmap.isNull()) {
+        return QString();
+    }
+    const QString baseDir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
+    QDir dir(baseDir.isEmpty() ? QDir::tempPath() : baseDir);
+    dir.mkpath(QStringLiteral("images"));
+    const QString filePath = dir.filePath(QStringLiteral("images/%1_%2.png")
+        .arg(prefix, QString::number(QDateTime::currentMSecsSinceEpoch())));
+    return pixmap.save(filePath, "PNG") ? filePath : QString();
 }
 
 }
@@ -70,6 +117,7 @@ Widget::Widget(QWidget* parent)
     connect(static_cast<TCPKernel*>(m_kernel), &TCPKernel::signal_onlineusers, this, &Widget::slot_onlineusers);
     connect(static_cast<TCPKernel*>(m_kernel), &TCPKernel::signal_privatechat, this, &Widget::slot_privatechat);
     connect(static_cast<TCPKernel*>(m_kernel), &TCPKernel::signal_privatehistory, this, &Widget::slot_privatehistory);
+    connect(static_cast<TCPKernel*>(m_kernel), &TCPKernel::signal_profileupdate, this, &Widget::slot_profileupdate);
     connect(static_cast<TCPKernel*>(m_kernel), &TCPKernel::signal_transfercontrol, this, &Widget::slot_transfercontrol);
     connect(static_cast<TCPKernel*>(m_kernel), &TCPKernel::signal_connectionStateChanged, this, &Widget::slot_connectionStateChanged);
     connect(static_cast<TCPKernel*>(m_kernel), &TCPKernel::signal_connectionStateChanged, m_login, &Login::slot_connectionStateChanged);
@@ -123,8 +171,10 @@ void Widget::slot_login(STRU_LOGIN_RS* response)
         m_login->hide();
         show();
         m_userId = response->m_userId;
-        m_userLabel->setText(QStringLiteral("当前用户：%1").arg(m_login->currentUserName()));
-        m_chat->setCurrentUser(m_userId, m_login->currentUserName());
+        m_currentUserName = m_login->currentUserName();
+        rememberAccount(m_currentUserName, m_userId);
+        m_userLabel->setText(QStringLiteral("当前用户：%1").arg(m_currentUserName));
+        m_chat->setCurrentUser(m_userId, m_currentUserName);
         appendStatus(QStringLiteral("登录成功，用户ID=%1。").arg(m_userId));
         refreshFileList();
         return;
@@ -407,6 +457,31 @@ void Widget::slot_privatehistory(STRU_PRIVATE_HISTORY_RS* response)
         return;
     }
     m_chat->loadPrivateHistory(response);
+}
+
+void Widget::slot_profileupdate(STRU_PROFILE_UPDATE_RS* response)
+{
+    if (!response || response->m_userId != m_userId) {
+        return;
+    }
+    if (m_chat) {
+        m_chat->handleProfileUpdate(response);
+    }
+    if (response->m_szResult == _profile_update_success) {
+        const QString oldName = m_currentUserName;
+        m_currentUserName = QString::fromLocal8Bit(response->m_szName).trimmed();
+        rememberAccount(m_currentUserName, m_userId);
+        if (!oldName.isEmpty() && oldName != m_currentUserName) {
+            QSettings settings;
+            QStringList accounts = savedAccounts();
+            accounts.removeAll(oldName);
+            accounts.removeAll(m_currentUserName);
+            accounts.prepend(m_currentUserName);
+            settings.setValue(QStringLiteral("accounts/recent"), accounts);
+        }
+        m_userLabel->setText(QStringLiteral("当前用户：%1").arg(m_currentUserName));
+        appendStatus(QStringLiteral("个人信息已更新。"));
+    }
 }
 
 void Widget::slot_transfercontrol(STRU_TRANSFERCONTROL_RS* response)
@@ -765,6 +840,446 @@ void Widget::updateTransferRates()
     }
 }
 
+QString Widget::localSettingsKey(const QString& key) const
+{
+    return localSettingsKeyForUser(m_userId, key);
+}
+
+QString Widget::localSettingsKeyForUser(qint64 userId, const QString& key) const
+{
+    return QStringLiteral("chat/%1/%2").arg(userId).arg(key);
+}
+
+QString Widget::localAvatarPath(qint64 userId) const
+{
+    const qint64 targetUserId = userId > 0 ? userId : m_userId;
+    if (targetUserId <= 0) {
+        return QString();
+    }
+    QSettings settings;
+    return settings.value(localSettingsKeyForUser(targetUserId, QStringLiteral("avatarPath"))).toString();
+}
+
+void Widget::saveLocalAvatarPath(const QString& path)
+{
+    if (m_userId <= 0) {
+        return;
+    }
+    QSettings settings;
+    settings.setValue(localSettingsKey(QStringLiteral("avatarPath")), path);
+    settings.sync();
+    if (m_chat) {
+        m_chat->reloadLocalSettings();
+    }
+}
+
+QPixmap Widget::avatarPixmap(const QString& userName, int size, qint64 userId) const
+{
+    QPixmap source;
+    const QString path = localAvatarPath(userId);
+    if (!path.isEmpty() && QFileInfo::exists(path)) {
+        source.load(path);
+    }
+    if (source.isNull()) {
+        source = QPixmap(size, size);
+        source.fill(Qt::transparent);
+        QPainter painter(&source);
+        painter.setRenderHint(QPainter::Antialiasing);
+        QLinearGradient gradient(0, 0, size, size);
+        gradient.setColorAt(0, QColor(42, 111, 151));
+        gradient.setColorAt(1, QColor(31, 122, 140));
+        painter.setBrush(gradient);
+        painter.setPen(Qt::NoPen);
+        painter.drawEllipse(source.rect().adjusted(5, 5, -5, -5));
+        painter.setPen(Qt::white);
+        QFont font = painter.font();
+        font.setBold(true);
+        font.setPointSize(qMax(18, size / 3));
+        painter.setFont(font);
+        painter.drawText(source.rect(), Qt::AlignCenter, initialsForName(userName));
+    }
+
+    QPixmap scaled = source.scaled(size - 8, size - 8, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+    QPixmap result(size, size);
+    result.fill(Qt::transparent);
+    QPainter painter(&result);
+    painter.setRenderHint(QPainter::Antialiasing);
+    QPainterPath pathClip;
+    pathClip.addRoundedRect(QRectF(4, 4, size - 8, size - 8), size / 4.2, size / 4.2);
+    painter.setClipPath(pathClip);
+    painter.fillRect(QRect(4, 4, size - 8, size - 8), QColor(244, 248, 251));
+    const int x = 4 + ((size - 8) - scaled.width()) / 2;
+    const int y = 4 + ((size - 8) - scaled.height()) / 2;
+    painter.drawPixmap(x, y, scaled);
+    painter.setClipping(false);
+    painter.setPen(QPen(QColor(233, 240, 247), 2));
+    painter.setBrush(Qt::NoBrush);
+    painter.drawRoundedRect(QRectF(4, 4, size - 8, size - 8), size / 4.2, size / 4.2);
+    return result;
+}
+
+void Widget::onProfileSettingsClicked()
+{
+    openProfileSettings();
+}
+
+QStringList Widget::savedAccounts() const
+{
+    QSettings settings;
+    QStringList accounts = settings.value(QStringLiteral("accounts/recent")).toStringList();
+    accounts.removeAll(QString());
+    accounts.removeDuplicates();
+    return accounts;
+}
+
+qint64 Widget::savedAccountId(const QString& userName) const
+{
+    QSettings settings;
+    return settings.value(QStringLiteral("accounts/users/%1/userId").arg(userName), 0).toLongLong();
+}
+
+void Widget::rememberAccount(const QString& userName, qint64 userId)
+{
+    const QString trimmed = userName.trimmed();
+    if (trimmed.isEmpty() || userId <= 0) {
+        return;
+    }
+    QStringList accounts = savedAccounts();
+    accounts.removeAll(trimmed);
+    accounts.prepend(trimmed);
+    while (accounts.size() > 8) {
+        accounts.removeLast();
+    }
+    QSettings settings;
+    settings.setValue(QStringLiteral("accounts/recent"), accounts);
+    settings.setValue(QStringLiteral("accounts/users/%1/userId").arg(trimmed), userId);
+}
+
+void Widget::switchToSavedAccount(const QString& userName)
+{
+    const QString trimmed = userName.trimmed();
+    const qint64 userId = savedAccountId(trimmed);
+    if (trimmed.isEmpty() || userId <= 0) {
+        showLoginForAccount(trimmed);
+        return;
+    }
+
+    if (m_transferPanel) {
+        m_transferPanel->hide();
+    }
+    m_userId = userId;
+    m_currentUserName = trimmed;
+    rememberAccount(trimmed, userId);
+    m_userLabel->setText(QStringLiteral("当前用户：%1").arg(m_currentUserName));
+    if (m_chat) {
+        m_chat->setCurrentUser(m_userId, m_currentUserName);
+    }
+    appendStatus(QStringLiteral("已切换到账号：%1。").arg(m_currentUserName));
+    refreshFileList();
+}
+
+void Widget::showLoginForAccount(const QString& userName)
+{
+    if (m_chat) {
+        m_chat->hide();
+    }
+    if (m_transferPanel) {
+        m_transferPanel->hide();
+    }
+    m_userId = 0;
+    m_currentUserName.clear();
+    m_fileTable->setRowCount(0);
+    m_userLabel->setText(QStringLiteral("当前用户：未登录"));
+    appendStatus(userName.trimmed().isEmpty()
+        ? QStringLiteral("准备添加账号。")
+        : QStringLiteral("准备切换到账号：%1。").arg(userName));
+    hide();
+    m_login->prepareLoginForUser(userName);
+    m_login->show();
+    m_login->raise();
+    m_login->activateWindow();
+}
+
+void Widget::onSwitchAccountClicked()
+{
+    QDialog dialog(this);
+    dialog.setWindowTitle(QStringLiteral("切换账号"));
+    dialog.setMinimumWidth(520);
+    auto* layout = new QVBoxLayout(&dialog);
+    layout->setContentsMargins(22, 22, 22, 22);
+    layout->setSpacing(14);
+
+    auto* title = new QLabel(QStringLiteral("账号切换"), &dialog);
+    title->setObjectName(QStringLiteral("dialogTitle"));
+    auto* current = new QLabel(QStringLiteral("当前账号：%1").arg(m_currentUserName), &dialog);
+    current->setObjectName(QStringLiteral("currentAccount"));
+    auto* listCard = new QFrame(&dialog);
+    listCard->setObjectName(QStringLiteral("settingsCard"));
+    auto* listLayout = new QVBoxLayout(listCard);
+    listLayout->setContentsMargins(14, 14, 14, 14);
+    listLayout->setSpacing(10);
+
+    const QStringList accounts = savedAccounts();
+    for (const QString& account : accounts) {
+        auto* accountButton = new QPushButton(account == m_currentUserName
+            ? QStringLiteral("%1  当前").arg(account)
+            : account, listCard);
+        accountButton->setObjectName(account == m_currentUserName ? QStringLiteral("currentButton") : QStringLiteral("accountButton"));
+        accountButton->setEnabled(account != m_currentUserName);
+        connect(accountButton, &QPushButton::clicked, &dialog, &QDialog::accept);
+        connect(accountButton, &QPushButton::clicked, this, [this, account]() {
+            switchToSavedAccount(account);
+        });
+        listLayout->addWidget(accountButton);
+    }
+    if (accounts.isEmpty()) {
+        auto* emptyHint = new QLabel(QStringLiteral("暂无其他已登录账号"), listCard);
+        emptyHint->setObjectName(QStringLiteral("hintLabel"));
+        listLayout->addWidget(emptyHint);
+    }
+
+    auto* addButton = new QPushButton(QStringLiteral("添加账号"), &dialog);
+    addButton->setObjectName(QStringLiteral("primaryButton"));
+    connect(addButton, &QPushButton::clicked, &dialog, &QDialog::accept);
+    connect(addButton, &QPushButton::clicked, this, [this]() {
+        showLoginForAccount(QString());
+    });
+    auto* closeButtons = new QDialogButtonBox(QDialogButtonBox::Close, &dialog);
+    if (auto* closeButton = closeButtons->button(QDialogButtonBox::Close)) {
+        closeButton->setText(QStringLiteral("关闭"));
+    }
+    connect(closeButtons, &QDialogButtonBox::rejected, &dialog, &QDialog::accept);
+
+    layout->addWidget(title);
+    layout->addWidget(current);
+    layout->addWidget(listCard);
+    layout->addWidget(addButton);
+    layout->addWidget(closeButtons);
+
+    dialog.setStyleSheet(QStringLiteral(
+        "QDialog { background: #eef3f7; color: #16324f; }"
+        "QLabel#dialogTitle { font-size: 24px; font-weight: 800; }"
+        "QLabel#currentAccount, QLabel#hintLabel { color: #647789; font-size: 13px; }"
+        "QFrame#settingsCard { background: rgba(255,255,255,0.82); border: 1px solid #d3dee8; border-radius: 18px; }"
+        "QPushButton { min-height: 38px; border-radius: 12px; border: none; padding: 0 14px; font-weight: 700; text-align: left; }"
+        "QPushButton#accountButton { background: white; color: #16324f; }"
+        "QPushButton#accountButton:hover { background: #dfeaf1; }"
+        "QPushButton#currentButton { background: #dbe7f0; color: #647789; }"
+        "QPushButton#primaryButton { background: #0b8793; color: white; text-align: center; }"
+        "QPushButton#primaryButton:hover { background: #086a74; }"));
+    dialog.exec();
+}
+
+void Widget::chooseProfileAvatar(QLabel* preview, QLabel* pathLabel)
+{
+    const QString path = QFileDialog::getOpenFileName(this, QStringLiteral("选择头像"), QString(),
+                                                      QStringLiteral("Images (*.png *.jpg *.jpeg *.bmp)"));
+    if (path.isEmpty()) {
+        return;
+    }
+    ImageCropDialog cropDialog(path, 1.0, QSize(512, 512), this);
+    if (cropDialog.exec() != QDialog::Accepted) {
+        return;
+    }
+    const QString croppedPath = saveCroppedImage(cropDialog.croppedPixmap(), QStringLiteral("avatar"));
+    if (croppedPath.isEmpty()) {
+        return;
+    }
+    saveLocalAvatarPath(croppedPath);
+    if (preview) {
+        preview->setPixmap(avatarPixmap(m_currentUserName, 88));
+    }
+    if (pathLabel) {
+        pathLabel->setText(QFileInfo(croppedPath).fileName());
+    }
+}
+
+void Widget::sendProfileUpdate(QLineEdit* nameEdit, QLineEdit* passwordEdit)
+{
+    if (!m_kernel || !m_kernel->isConnected() || m_userId <= 0 || !nameEdit || !passwordEdit) {
+        QMessageBox::warning(this, QStringLiteral("个人信息"), QStringLiteral("当前未连接服务端，无法修改用户名或密码。"));
+        return;
+    }
+
+    const QString newName = nameEdit->text().trimmed();
+    const QString newPassword = passwordEdit->text().trimmed();
+    if (newName.isEmpty()) {
+        QMessageBox::warning(this, QStringLiteral("个人信息"), QStringLiteral("用户名不能为空。"));
+        return;
+    }
+    if (newName == m_currentUserName && newPassword.isEmpty()) {
+        QMessageBox::information(this, QStringLiteral("个人信息"), QStringLiteral("头像已保存在本机，用户名和密码没有变化。"));
+        return;
+    }
+
+    STRU_PROFILE_UPDATE_RQ request;
+    request.m_userId = m_userId;
+    qstrncpy(request.m_szName, newName.toLocal8Bit().constData(), MAXSIZE);
+    qstrncpy(request.m_szPassWord, newPassword.toLocal8Bit().constData(), MAXSIZE);
+    if (m_kernel->sendData(reinterpret_cast<char*>(&request), sizeof(request))) {
+        passwordEdit->clear();
+        QMessageBox::information(this, QStringLiteral("个人信息"), QStringLiteral("修改请求已发送。"));
+    } else {
+        QMessageBox::warning(this, QStringLiteral("个人信息"), QStringLiteral("修改请求发送失败。"));
+    }
+}
+
+void Widget::openProfileSettings()
+{
+    if (m_userId <= 0) {
+        QMessageBox::information(this, QStringLiteral("用户设置"), QStringLiteral("请先登录账号。"));
+        return;
+    }
+
+    QDialog dialog(this);
+    dialog.setWindowTitle(QStringLiteral("用户资料"));
+    dialog.setMinimumWidth(720);
+    auto* rootLayout = new QVBoxLayout(&dialog);
+    rootLayout->setContentsMargins(24, 24, 24, 24);
+    rootLayout->setSpacing(16);
+
+    auto* title = new QLabel(QStringLiteral("用户资料"), &dialog);
+    title->setObjectName(QStringLiteral("dialogTitle"));
+    auto* subtitle = new QLabel(QStringLiteral("账号信息、头像和会话操作分开管理"), &dialog);
+    subtitle->setObjectName(QStringLiteral("dialogSubtitle"));
+
+    auto* cardsLayout = new QHBoxLayout;
+    cardsLayout->setSpacing(14);
+
+    auto* avatarCard = new QFrame(&dialog);
+    avatarCard->setObjectName(QStringLiteral("settingsCard"));
+    auto* avatarLayout = new QVBoxLayout(avatarCard);
+    avatarLayout->setContentsMargins(18, 18, 18, 18);
+    avatarLayout->setSpacing(12);
+    auto* avatarTitle = new QLabel(QStringLiteral("头像"), avatarCard);
+    avatarTitle->setObjectName(QStringLiteral("sectionTitle"));
+    auto* avatarPreview = new QLabel(avatarCard);
+    avatarPreview->setFixedSize(88, 88);
+    avatarPreview->setPixmap(avatarPixmap(m_currentUserName, 88));
+    avatarPreview->setAlignment(Qt::AlignCenter);
+    auto* avatarPathLabel = new QLabel(localAvatarPath().isEmpty()
+        ? QStringLiteral("使用默认头像")
+        : QFileInfo(localAvatarPath()).fileName(), avatarCard);
+    avatarPathLabel->setObjectName(QStringLiteral("sectionHint"));
+    auto* avatarButton = new QPushButton(QStringLiteral("选择头像"), avatarCard);
+    avatarButton->setObjectName(QStringLiteral("primaryButton"));
+    connect(avatarButton, &QPushButton::clicked, this, [this, avatarPreview, avatarPathLabel]() {
+        chooseProfileAvatar(avatarPreview, avatarPathLabel);
+    });
+    avatarLayout->addWidget(avatarTitle);
+    avatarLayout->addWidget(avatarPreview, 0, Qt::AlignHCenter);
+    avatarLayout->addWidget(avatarPathLabel, 0, Qt::AlignHCenter);
+    avatarLayout->addWidget(avatarButton);
+    avatarLayout->addStretch();
+
+    auto* accountCard = new QFrame(&dialog);
+    accountCard->setObjectName(QStringLiteral("settingsCard"));
+    auto* accountLayout = new QVBoxLayout(accountCard);
+    accountLayout->setContentsMargins(18, 18, 18, 18);
+    accountLayout->setSpacing(12);
+    auto* accountTitle = new QLabel(QStringLiteral("账号信息"), accountCard);
+    accountTitle->setObjectName(QStringLiteral("sectionTitle"));
+    auto* nameLabel = new QLabel(QStringLiteral("用户名"), accountCard);
+    auto* nameEdit = new QLineEdit(m_currentUserName, accountCard);
+    auto* passwordLabel = new QLabel(QStringLiteral("新密码"), accountCard);
+    auto* passwordEdit = new QLineEdit(accountCard);
+    passwordEdit->setEchoMode(QLineEdit::Password);
+    passwordEdit->setPlaceholderText(QStringLiteral("留空则不修改密码"));
+    auto* saveButton = new QPushButton(QStringLiteral("保存用户名/密码"), accountCard);
+    saveButton->setObjectName(QStringLiteral("primaryButton"));
+    connect(saveButton, &QPushButton::clicked, this, [this, nameEdit, passwordEdit]() {
+        sendProfileUpdate(nameEdit, passwordEdit);
+    });
+    accountLayout->addWidget(accountTitle);
+    accountLayout->addWidget(nameLabel);
+    accountLayout->addWidget(nameEdit);
+    accountLayout->addWidget(passwordLabel);
+    accountLayout->addWidget(passwordEdit);
+    accountLayout->addStretch();
+    accountLayout->addWidget(saveButton);
+
+    auto* sessionCard = new QFrame(&dialog);
+    sessionCard->setObjectName(QStringLiteral("settingsCard"));
+    auto* sessionLayout = new QVBoxLayout(sessionCard);
+    sessionLayout->setContentsMargins(18, 18, 18, 18);
+    sessionLayout->setSpacing(12);
+    auto* sessionTitle = new QLabel(QStringLiteral("账号会话"), sessionCard);
+    sessionTitle->setObjectName(QStringLiteral("sectionTitle"));
+    auto* sessionHint = new QLabel(QStringLiteral("选择右侧头像即可切换到已登录账号。"), sessionCard);
+    sessionHint->setWordWrap(true);
+    sessionHint->setObjectName(QStringLiteral("sectionHint"));
+    auto* accountGrid = new QGridLayout;
+    accountGrid->setContentsMargins(0, 0, 0, 0);
+    accountGrid->setSpacing(10);
+    QStringList accounts = savedAccounts();
+    if (!m_currentUserName.isEmpty() && !accounts.contains(m_currentUserName)) {
+        accounts.prepend(m_currentUserName);
+    }
+    for (int i = 0; i < accounts.size(); ++i) {
+        const QString account = accounts.at(i);
+        const qint64 accountId = savedAccountId(account);
+        auto* accountButton = new QToolButton(sessionCard);
+        accountButton->setObjectName(account == m_currentUserName ? QStringLiteral("activeAccountButton") : QStringLiteral("accountAvatarButton"));
+        accountButton->setToolButtonStyle(Qt::ToolButtonTextUnderIcon);
+        accountButton->setIcon(QIcon(avatarPixmap(account, 72, accountId)));
+        accountButton->setIconSize(QSize(58, 58));
+        accountButton->setText(account == m_currentUserName ? QStringLiteral("%1\n当前").arg(account) : account);
+        accountButton->setEnabled(account != m_currentUserName);
+        accountButton->setToolTip(account == m_currentUserName ? QStringLiteral("当前账号") : QStringLiteral("切换到 %1").arg(account));
+        connect(accountButton, &QToolButton::clicked, &dialog, &QDialog::accept);
+        connect(accountButton, &QToolButton::clicked, this, [this, account]() {
+            switchToSavedAccount(account);
+        });
+        accountGrid->addWidget(accountButton, i / 2, i % 2);
+    }
+    auto* addButton = new QPushButton(QStringLiteral("添加账号"), sessionCard);
+    addButton->setObjectName(QStringLiteral("softButton"));
+    connect(addButton, &QPushButton::clicked, &dialog, &QDialog::accept);
+    connect(addButton, &QPushButton::clicked, this, [this]() {
+        showLoginForAccount(QString());
+    });
+    sessionLayout->addWidget(sessionTitle);
+    sessionLayout->addWidget(sessionHint);
+    sessionLayout->addLayout(accountGrid);
+    sessionLayout->addStretch();
+    sessionLayout->addWidget(addButton);
+
+    cardsLayout->addWidget(avatarCard);
+    cardsLayout->addWidget(accountCard, 2);
+    cardsLayout->addWidget(sessionCard);
+
+    auto* buttons = new QDialogButtonBox(QDialogButtonBox::Close, &dialog);
+    if (auto* closeButton = buttons->button(QDialogButtonBox::Close)) {
+        closeButton->setText(QStringLiteral("关闭"));
+    }
+    connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::accept);
+
+    rootLayout->addWidget(title);
+    rootLayout->addWidget(subtitle);
+    rootLayout->addLayout(cardsLayout);
+    rootLayout->addWidget(buttons);
+
+    dialog.setStyleSheet(QStringLiteral(
+        "QDialog { background: #eef3f7; color: #16324f; }"
+        "QLabel#dialogTitle { font-size: 24px; font-weight: 800; }"
+        "QLabel#dialogSubtitle, QLabel#sectionHint { color: #647789; font-size: 13px; }"
+        "QLabel#sectionTitle { font-size: 16px; font-weight: 800; }"
+        "QFrame#settingsCard { background: rgba(255,255,255,0.82); border: 1px solid #d3dee8; border-radius: 18px; }"
+        "QLineEdit { min-height: 38px; border-radius: 12px; padding: 0 12px; border: 1px solid #c9d6e2; background: white; }"
+        "QPushButton { min-height: 38px; border-radius: 12px; border: none; padding: 0 14px; font-weight: 700; }"
+        "QPushButton#primaryButton { background: #0b8793; color: white; }"
+        "QPushButton#primaryButton:hover { background: #086a74; }"
+        "QPushButton#softButton { background: #dfeaf1; color: #16324f; }"
+        "QPushButton#softButton:hover { background: #d2e2eb; }"
+        "QPushButton#dangerButton { background: #16324f; color: white; }"
+        "QPushButton#dangerButton:hover { background: #0f253b; }"
+        "QToolButton#accountAvatarButton, QToolButton#activeAccountButton { min-width: 96px; min-height: 104px; border-radius: 18px; padding: 8px; font-weight: 700; color: #16324f; }"
+        "QToolButton#accountAvatarButton { background: rgba(255,255,255,0.70); border: 1px solid rgba(203,216,226,0.86); }"
+        "QToolButton#accountAvatarButton:hover { background: #edf5f7; border-color: rgba(31,122,140,0.42); }"
+        "QToolButton#activeAccountButton { background: #d8edf2; border: 2px solid rgba(31,122,140,0.42); color: #466273; }"));
+    dialog.exec();
+}
+
 void Widget::buildUi()
 {
     auto* rootLayout = new QHBoxLayout(this);
@@ -777,12 +1292,25 @@ void Widget::buildUi()
     sideLayout->setContentsMargins(18, 18, 18, 18);
     sideLayout->setSpacing(12);
 
+    auto* sideHeaderLayout = new QHBoxLayout;
+    sideHeaderLayout->setContentsMargins(0, 0, 0, 0);
+    sideHeaderLayout->setSpacing(10);
+
     auto* title = new QLabel(QStringLiteral("Jaeger Disk"), sidePanel);
     title->setObjectName(QStringLiteral("sideTitle"));
+    m_profileButton = new QPushButton(sidePanel);
+    m_profileButton->setObjectName(QStringLiteral("profileButton"));
+    m_profileButton->setIcon(makeProfileIcon(QColor(255, 255, 255)));
+    m_profileButton->setIconSize(QSize(24, 24));
+    m_profileButton->setToolTip(QStringLiteral("用户资料与切换账号"));
+    connect(m_profileButton, &QPushButton::clicked, this, &Widget::onProfileSettingsClicked);
+    sideHeaderLayout->addWidget(title, 1);
+    sideHeaderLayout->addWidget(m_profileButton);
+
     auto* subtitle = new QLabel(QStringLiteral("上传、下载、聊天与文件管理"), sidePanel);
     subtitle->setWordWrap(true);
     subtitle->setObjectName(QStringLiteral("sideSubtitle"));
-    sideLayout->addWidget(title);
+    sideLayout->addLayout(sideHeaderLayout);
     sideLayout->addWidget(subtitle);
 
     m_chatButton = new QPushButton(QStringLiteral("打开聊天"), sidePanel);
@@ -868,6 +1396,8 @@ void Widget::applyStyle()
         "QLabel#connectionBadge { background: #d9f0e3; color: #14532d; border-radius: 12px; padding: 6px 12px; font-weight: 600; }"
         "QPushButton { min-height: 42px; border-radius: 14px; border: none; background: white; color: #16324f; font-weight: 600; }"
         "QPushButton:hover { background: #dbe7f0; }"
+        "QPushButton#profileButton { min-width: 44px; max-width: 44px; min-height: 44px; max-height: 44px; border-radius: 22px; background: rgba(255,255,255,0.16); border: 1px solid rgba(255,255,255,0.28); }"
+        "QPushButton#profileButton:hover { background: rgba(255,255,255,0.26); }"
         "QPushButton:disabled { background: #b9c8d3; color: #5f7385; }"
         "QTableWidget { background: rgba(255,255,255,0.96); border-radius: 18px; border: 1px solid #d4dee7; gridline-color: #edf2f6; }"
         "QHeaderView::section { background: #dbe7f0; color: #16324f; border: none; padding: 10px; font-weight: 700; }"

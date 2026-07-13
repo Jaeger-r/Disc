@@ -47,6 +47,7 @@ endif()
 
 set(DISKCLIENT_SOURCES
     chat.cpp
+    imagecropdialog.cpp
     login.cpp
     main.cpp
     md5.cpp
@@ -59,6 +60,7 @@ set(DISKCLIENT_SOURCES
 set(DISKCLIENT_HEADERS
     Packdef.h
     chat.h
+    imagecropdialog.h
     login.h
     md5.h
     transferpanel.h

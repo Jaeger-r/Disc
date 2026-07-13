@@ -32,6 +32,7 @@ signals:
     void signal_onlineusers(STRU_ONLINE_USERS_RS*);
     void signal_privatechat(STRU_PRIVATE_CHAT_RS*);
     void signal_privatehistory(STRU_PRIVATE_HISTORY_RS*);
+    void signal_profileupdate(STRU_PROFILE_UPDATE_RS*);
     void signal_transfercontrol(STRU_TRANSFERCONTROL_RS*);
     void signal_connectionStateChanged(bool connected, const QString& reason);
 private:

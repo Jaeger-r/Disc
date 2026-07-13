@@ -128,6 +128,9 @@ void TCPKernel::dealData(const char *szbuf)
         case _default_protocol_private_history_send:
             emit signal_privatehistory((STRU_PRIVATE_HISTORY_RS*)szbuf);
             break;
+        case _default_protocol_profile_update_send:
+            emit signal_profileupdate((STRU_PROFILE_UPDATE_RS*)szbuf);
+            break;
         case _default_protocol_transfercontrol_send:
             emit signal_transfercontrol((STRU_TRANSFERCONTROL_RS*)szbuf);
             break;

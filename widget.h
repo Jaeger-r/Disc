@@ -4,6 +4,7 @@
 #include <QDateTime>
 #include <QHash>
 #include <QPointer>
+#include <QPixmap>
 #include <QTimer>
 #include <QWidget>
 
@@ -14,6 +15,7 @@
 
 class QFile;
 class QLabel;
+class QLineEdit;
 class QMenu;
 class QPoint;
 class QPushButton;
@@ -77,6 +79,7 @@ public slots:
     void slot_onlineusers(STRU_ONLINE_USERS_RS*);
     void slot_privatechat(STRU_PRIVATE_CHAT_RS*);
     void slot_privatehistory(STRU_PRIVATE_HISTORY_RS*);
+    void slot_profileupdate(STRU_PROFILE_UPDATE_RS*);
     void slot_transfercontrol(STRU_TRANSFERCONTROL_RS*);
     void slot_connectionStateChanged(bool connected, const QString& reason);
 
@@ -90,6 +93,8 @@ private slots:
     void onSelectionChanged();
     void onFileTableContextMenuRequested(const QPoint& pos);
     void onTransfersClicked();
+    void onProfileSettingsClicked();
+    void onSwitchAccountClicked();
     void onTransferPauseRequested(const QString& taskKey);
     void onTransferResumeRequested(const QString& taskKey);
     void onTransferCancelRequested(const QString& taskKey);
@@ -114,6 +119,19 @@ private:
     QString formatSize(qint64 bytes) const;
     QString fileStateText(int fileState) const;
     QString computeFileMd5(const QString& filePath) const;
+    QString localSettingsKey(const QString& key) const;
+    QString localSettingsKeyForUser(qint64 userId, const QString& key) const;
+    QString localAvatarPath(qint64 userId = -1) const;
+    void saveLocalAvatarPath(const QString& path);
+    QPixmap avatarPixmap(const QString& userName, int size, qint64 userId = -1) const;
+    void openProfileSettings();
+    void chooseProfileAvatar(QLabel* preview, QLabel* pathLabel);
+    void sendProfileUpdate(QLineEdit* nameEdit, QLineEdit* passwordEdit);
+    QStringList savedAccounts() const;
+    qint64 savedAccountId(const QString& userName) const;
+    void rememberAccount(const QString& userName, qint64 userId);
+    void showLoginForAccount(const QString& userName);
+    void switchToSavedAccount(const QString& userName);
 
     QString makeTaskKey(TransferTask::Direction direction, const QString& md5) const;
     TransferTaskSnapshot makeSnapshot(const TransferTask* task) const;
@@ -137,6 +155,7 @@ private:
 
     QLabel* m_connectionBadge = nullptr;
     QLabel* m_userLabel = nullptr;
+    QPushButton* m_profileButton = nullptr;
     QTableWidget* m_fileTable = nullptr;
     QTextEdit* m_statusLog = nullptr;
     QPushButton* m_uploadButton = nullptr;
@@ -152,6 +171,7 @@ private:
     TransferPanel* m_transferPanel = nullptr;
     IKernel* m_kernel = nullptr;
     qint64 m_userId = 0;
+    QString m_currentUserName;
     QHash<QString, TransferTask*> m_transferTasks;
     QTimer m_uploadPumpTimer;
     QTimer m_transferRateTimer;

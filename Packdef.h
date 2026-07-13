@@ -52,6 +52,8 @@
 #define _default_protocol_private_chat_send              _default_protocol_base + 33
 #define _default_protocol_private_history_request        _default_protocol_base + 34
 #define _default_protocol_private_history_send           _default_protocol_base + 35
+#define _default_protocol_profile_update_request         _default_protocol_base + 36
+#define _default_protocol_profile_update_send            _default_protocol_base + 37
 
 
 
@@ -71,6 +73,11 @@
 #define _login_usernoexist 0
 #define _login_passworderr 1
 #define _login_success 2
+
+#define _profile_update_success 0
+#define _profile_update_fail 1
+#define _profile_update_name_exists 2
+#define _profile_update_invalid 3
 
 #define _fileinfo_isuploaded 0       //已经上传
 #define _fileinfo_continue   1       //断点续传
@@ -369,6 +376,22 @@ struct STRU_PRIVATE_HISTORY_RS:public STRU_BASE{
     long long m_peerId;
     int m_messageCount;
     ChatHistoryInfo m_messages[CHATHISTORYNUM];
+};
+struct STRU_PROFILE_UPDATE_RQ:public STRU_BASE{
+    STRU_PROFILE_UPDATE_RQ(){
+        m_nType = _default_protocol_profile_update_request;
+    }
+    long long m_userId;
+    char m_szName[MAXSIZE];
+    char m_szPassWord[MAXSIZE];
+};
+struct STRU_PROFILE_UPDATE_RS:public STRU_BASE{
+    STRU_PROFILE_UPDATE_RS(){
+        m_nType = _default_protocol_profile_update_send;
+    }
+    long long m_userId;
+    char m_szResult;
+    char m_szName[MAXSIZE];
 };
 //传输控制
 struct STRU_TRANSFERCONTROL_RQ:public STRU_BASE{
